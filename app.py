@@ -1,10 +1,30 @@
 from flask import Flask , request , jsonify 
+from flask_sqlalchemy import SQLAlchemy
+
+
 import sqlite3
 
 app = Flask(__name__)
 
 
+## Database configuration (using SQLite)
 
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///notes.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+class Note(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(100), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+
+with app.app_context():
+    db.create_all()
+
+@app.route('/')
+def home():
+    return "Database connected successfully!"
 
 
 
@@ -19,15 +39,15 @@ def get_db_connection():
 
 @app.route('/api/notes', methods=['GET'])
 def get_notes():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM notes')
-    notes = cursor.fetchall()
-    conn.close()
-    
-    #converting them into dic
-    notes_list = [dict(note) for note in notes]
-    return jsonify(notes_list)
+    notes = Note.query.all()
+    notes_list = []
+    for note in notes:
+        notes_list.append({
+            "id": note.id,
+            "title": note.title, 
+            "content" : note.content
+        })
+    return jsonify(notes_list), 200
    
 @app.route('/api/notes', methods=['POST'])
 def create_note():
@@ -42,77 +62,52 @@ def create_note():
 
     if not title or not content:
         return jsonify({'message': 'Both title and content are required.'}), 400
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("INSERT INTO notes (title,content) VALUES (?,?)", (title,content))
-
-    conn.commit()
-    note_id = cursor.lastrowid
     
-    msg = {
-        "id": note_id,
-        "title": title,
-        "content": content
-    }
-    conn.close()
-    return jsonify(msg), 200
-
+    new_note = Note(title=data['title'], content=data['content'])
+    db.session.add(new_note)
+    db.session.commit()
+    return jsonify({"message": "Note added successfully!"}), 201
+    
 
 @app.route('/api/notes/<int:note_id>', methods = ['PUT'])
 def update_note(note_id):
     data = request.get_json()
+    note = Note.query.get(note_id)
 
     if not data:
-        return jsonify({'message': 'Missing JSON data'})
+        return jsonify({'message': 'Missing JSON data'}),400
 
     title = data.get('title')
-    content = data.get('content'),400
+    content = data.get('content')
 
     if not title or not content:
         return jsonify({'message': 'Both title and contents should be present.'}),400
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    note.title = title
+    note.content = content
+    db.session.commit()
 
-    cursor.execute(
-        'UPDATE notes SET title = ? , content = ? WHERE id = ?',
-        (title,content, note_id)
-    )
-    conn.commit()
-
-    #checking if any row was updated
-    if cursor.rowcount == 0:
-        conn.close()
-        return jsonify({
-            'error': 'Note not found'
-        }), 404
-    
-    conn.close()
     return jsonify({
-        'id': note_id, 
-        'title' : title, 
-        'content': content
-    }), 200
+        "message": "Note updated successfully!",
+        "note": {
+            "id": note.id,
+            "title" : note.title,
+            "content": note.content
+        }
+    }),200
 
 @app.route('/api/notes/<int:note_id>', methods = ['DELETE'])
 def delete_note(note_id):
-    data = request.get_json()
+    note = Note.query.get(note_id)
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("DELETE FROM notes WHERE id = ?", (note_id,))
-    conn.commit()
-
-    if cursor.rowcount == 0:
-        
-        return jsonify({'error': 'Sorry no note with this id found'}), 404
-    conn.close()
-    return jsonify({'message': "Note deleted successfully"}), 200
+    if not note:
+        return jsonify({"message": "Note not found."}),404
     
+    db.session.delete(note)
+    db.session.commit()
 
+    return jsonify({"message":" Note deleted successfully."}), 200
+    
         
        
 import sqlite3
